@@ -1,0 +1,5 @@
+PN532_I2C
+RPi.GPIO
+requests
+flask
+busio
