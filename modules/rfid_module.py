@@ -106,6 +106,7 @@ class PN532Handler:
                             json=post_data,
                             timeout=REQUEST_TIMEOUT
                         )
+                        self.hw.open_and_close_door()
                         self.hw.indicate_success()
                         
                     else:
