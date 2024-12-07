@@ -84,13 +84,19 @@ class PN532Handler:
                 
                 try:
                     response = requests.get(
-                        f"{API_BASE_URL}/users", # Check Here
+                        f"{API_BASE_URL}/users", 
                         timeout = REQUEST_TIMEOUT
                     )
                     
                     users = response.json() 
                     print(f"users: {users}")
-                    matched_user = list(filter(lambda user: user.get('rfid') == card_id, users))
+                    current_timestamp = int(time.time())
+                    matched_user = list(filter(
+                        lambda user: user.get('rfid') == card_id and 
+                        int(datetime.fromisoformat(user.get('accessStart')).timestamp()) <= current_timestamp <= 
+                        int(datetime.fromisoformat(user.get('accessEnd')).timestamp()),
+                        users
+                    ))
                     print(f"matched_user: {matched_user}")
                     
                     if matched_user:
@@ -152,7 +158,7 @@ class PN532Handler:
                     return jsonify({'status': 'error', 'message': '카드 읽기 시간 초과'}), 408
                     
                 response = requests.post(
-                    f"{API_BASE_URL}/users/enroll", # Check Here
+                    f"{API_BASE_URL}/users/enroll", 
                     json={'card_id': card_id},
                     timeout=REQUEST_TIMEOUT
                 )
