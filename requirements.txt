@@ -1,5 +1,4 @@
-PN532_I2C
-RPi.GPIO
 requests
+RPi.GPIO
+adafruit-circuitpython-pn532
 flask
-busio

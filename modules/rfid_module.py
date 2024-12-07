@@ -1,67 +1,26 @@
-import time 
-import boasrd
-import busio
-import RPi.GPIO as GPIO
+# Standard library imports
+import time
 from datetime import datetime
-from typing import Tuple, Optional
-from adafruit_pn532.i2c import PN532_I2C
-import requests
 from threading import Thread
+from typing import Optional, Tuple
+
+# Third-party imports
+import board
+import busio
+import requests
+import RPi.GPIO as GPIO
+from adafruit_pn532.i2c import PN532_I2C
 from flask import Flask, jsonify
 
-class HardwareController:
-    """硬件控制类：负责LED和蜂鸣器的控制"""
-    
-    def __init__(self, green_led_pin=18, red_led_pin=23, buzzer_pin=24):
-        # 初始化GPIO
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setwarnings(False)
-        
-        self.pins = {
-            'green_led': green_led_pin,
-            'red_led': red_led_pin,
-            'buzzer': buzzer_pin
-        }
-        
-        # 所有引脚设置为输出模式
-        for pin in self.pins.values():
-            GPIO.setup(pin, GPIO.OUT)
-            GPIO.output(pin, GPIO.LOW)
-        
-        self._blink_flag = False
-    
-    def _blink_led(self, led_pin: int, duration: float = 0.5):
-        """控制LED闪烁"""
-        GPIO.output(led_pin, GPIO.HIGH)
-        time.sleep(duration)
-        GPIO.output(led_pin, GPIO.LOW)
-    
-    def _beep(self, duration: float = 0.2):
-        """蜂鸣器响声"""
-        GPIO.output(self.pins['buzzer'], GPIO.HIGH)
-        time.sleep(duration)
-        GPIO.output(self.pins['buzzer'], GPIO.LOW)
-
-    def indicate_success(self):
-        """成功指示：绿色LED亮起 + 蜂鸣器响一次"""
-        self._beep(0.1)
-        self._blink_led(self.pins['green_led'], 2)
-
-    def indicate_failure(self):
-        """失败指示：红色LED闪烁 + 蜂鸣器响两次"""
-        for _ in range(2):
-            self._beep(0.1)
-            time.sleep(0.1)
-        self._blink_led(self.pins['red_led'], 2)
-
-    def start_enrollment_indicator(self):
-        """开始注册指示：绿色LED闪烁"""
-        self._blink_led(self.pins['green_led'], 0.5)
-    
-    def cleanup(self):
-        """清理GPIO资源"""
-        GPIO.cleanup()
-
+# Local imports
+from .gpio_controller import GPIOController
+from config import (
+    API_BASE_URL,
+    REQUEST_TIMEOUT,
+    CARD_READ_TIMEOUT,
+    READER_MODE,
+    ENROLLER_MODE
+)
 
 class PN532Handler:
     """RFID读卡器主控制类"""
@@ -70,12 +29,13 @@ class PN532Handler:
         self.device_mode = device_mode
         self.retry_count = retry_count
         # 初始化硬件控制器
-        self.hw = HardwareController()
+        self.hw = GPIOController()
         self._initialize_pn532()
     
     def _initialize_pn532(self):
         """初始化PN532，包含重试机制"""
         for attempt in range(self.retry_count):
+            
             try:
                 i2c = busio.I2C(board.SCL, board.SDA)
                 time.sleep(1)
@@ -84,16 +44,19 @@ class PN532Handler:
                 version = self.pn532.firmware_version
                 print(f"已确认PN532固件版本：{version}")
                 return True
+
             except Exception as e:
                 print(f"初始化尝试 {attempt + 1} 失败：{str(e)}")
+
                 if attempt < self.retry_count - 1:
                     time.sleep(2)
                 else:
                     raise RuntimeError("PN532初始化失败。请检查硬件连接。")
 
-    def read_card(self, timeout: float = 1) -> Optional[str]:
+    def read_card(self, timeout: float = CARD_READ_TIMEOUT) -> Optional[str]:
         """读取卡片UID"""
         start_time = time.time()
+        
         while time.time() - start_time < timeout:
             try:
                 uid = self.pn532.read_passive_target(timeout=0.5)
@@ -102,31 +65,62 @@ class PN532Handler:
             except Exception as e:
                 print(f"读取卡片错误：{str(e)}")
                 time.sleep(0.1)
+
         return None
 
     def check_card_access(self):
         """读卡器模式：持续读取卡片并验证权限"""
+        
         if self.device_mode != READER_MODE:
             raise RuntimeError("当前设备不是读卡器模式。")
-            
         print("\n卡片访问验证模式开始... 按 Ctrl+C 结束。")
+        
         try:
             while True:
                 card_id = self.read_card()
+                
                 if card_id is None:
                     continue
                 
                 try:
                     response = requests.get(
-                        f"{API_BASE_URL}/api/entry/{card_id}", # 检查这里
-                        timeout=REQUEST_TIMEOUT
+                        f"{API_BASE_URL}/users", # Check Here
+                        timeout = REQUEST_TIMEOUT
                     )
-                    if response.status_code == 200 and response.json().get('allowed'):
-                        print(f"欢迎，卡片ID：{card_id}")
+                    
+                    users = response.json() 
+                    print(f"users: {users}")
+                    matched_user = list(filter(lambda user: user.get('rfid') == card_id, users))
+                    print(f"matched_user: {matched_user}")
+                    
+                    if matched_user:
+                        print(f"환영합니다, 카드 ID: {card_id}")
+                        user = matched_user[0]
+                        post_data = {
+                            "method": "rfid",
+                            "userId": user.get('id'),
+                            "result": True
+                        }
+                        requests.post(
+                            f"{API_BASE_URL}/access/log", 
+                            json=post_data,
+                            timeout=REQUEST_TIMEOUT
+                        )
                         self.hw.indicate_success()
+                        
                     else:
-                        print(f"警告！未授权卡片ID：{card_id}")
+                        post_data = {
+                            "method": "rfid",
+                            "result": False
+                        }
+                        requests.post(
+                            f"{API_BASE_URL}/access/log", 
+                            json=post_data,
+                            timeout=REQUEST_TIMEOUT
+                        )
+                        print(f"경고! 미승인 카드 ID: {card_id}")
                         self.hw.indicate_failure()
+
                 except requests.RequestException as e:
                     print(f"服务器连接失败：{str(e)}")
                     self.hw.indicate_failure()
@@ -144,49 +138,50 @@ class PN532Handler:
             raise RuntimeError("当前设备不是注册器模式。")
             
         print("\n卡片注册模式开始... 按 Ctrl+C 结束。")
+        app = Flask(__name__)
         
-        try:
-            while True:
-                self.hw.start_enrollment_indicator()  # 开始注册指示
+        @app.route('/api', methods=['POST'])
+        def enroll():
+            try:
+                self.hw.start_enrollment_indicator()  # 등록 시작 표시
                 card_id = self.read_card(timeout=10)
                 
                 if card_id is None:
                     self.hw.indicate_failure()
-                    time.sleep(0.5)
-                    continue
+                    return jsonify({'status': 'error', 'message': '카드 읽기 시간 초과'}), 408
                     
                 response = requests.post(
-                    f"{API_BASE_URL}/temporary-user?rfid={card_id}",
+                    f"{API_BASE_URL}/users/enroll", # Check Here
+                    json={'card_id': card_id},
+                    timeout=REQUEST_TIMEOUT
                 )
-                print(response)
-                self.hw.indicate_success()
-                print(f"正在注册，卡片ID：{card_id}")
-                time.sleep(3)
                 
-        except Exception as e:
-            self.hw.indicate_failure()
+                if response.status_code == 200:
+                    self.hw.indicate_success()
+                    return jsonify({
+                        'type': 'rfid',
+                        'card_id': card_id,
+                        'status': 'success',
+                        'message': '카드 등록 성공'
+                    })
+                else:
+                    self.hw.indicate_failure()
+                    return jsonify({
+                        'status': 'error',
+                        'message': '원격 서버 등록 실패'
+                    }), 500
+                    
+            except Exception as e:
+                self.hw.indicate_failure()
+                return jsonify({
+                    'status': 'error',
+                    'message': str(e)
+                }), 500
+
+        Thread(target=lambda: app.run(host='0.0.0.0', port=port, debug=False)).start()
+        print(f"등록 서버가 포트 {port}에서 시작되었습니다.")        
 
     def __del__(self):
         """析构函数：清理硬件资源"""
         if hasattr(self, 'hw'):
             self.hw.cleanup()
-
-# 常量定义
-READER_MODE = 0
-ENROLLER_MODE = 1
-API_BASE_URL = "http://10.144.85.43:8080/api"
-REQUEST_TIMEOUT = 5
-CARD_READ_TIMEOUT = 1
-
-DEVICE_MODE = ENROLLER_MODE # 待完成
-
-if __name__ == "__main__":
-    try:
-        handler = PN532Handler(device_mode = DEVICE_MODE)
-        if DEVICE_MODE == READER_MODE:
-            handler.check_card_access()
-        else:
-            handler.start_enrollment_server()
-            
-    except Exception as e:
-        print(f"程序错误：{str(e)}")
