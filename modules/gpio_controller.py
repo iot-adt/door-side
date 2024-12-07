@@ -9,7 +9,13 @@ from config import MOTOR_DURATION_SECONDS
 class GPIOController:
     """硬件控制类：负责LED和蜂鸣器的控制"""
 
-    def __init__(self, green_led_pin=18, red_led_pin=23, buzzer_pin=24, motor_pin1=19, motor_pin2=26):
+    def __init__(self, 
+                 motor_pin1=26, 
+                 motor_pin2=19,
+                 red_led_pin=13, 
+                 green_led_pin=6,
+                 buzzer_pin=5
+                 ):
         # 初始化GPIO
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
