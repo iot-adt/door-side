@@ -1,12 +1,12 @@
-# 设备模式
+# Device modes
 READER_MODE = 0
 ENROLLER_MODE = 1
 DEVICE_MODE = READER_MODE # Check Here
 
-# HTTP服务
+# HTTP service
 API_BASE_URL = "http://10.144.85.43:8080/api"
-REQUEST_TIMEOUT = 5
-CARD_READ_TIMEOUT = 1
+REQUEST_TIMEOUT = 3
+CARD_READ_TIMEOUT = 0.5
 
-# 硬件配置
+# Hardware configuration
 MOTOR_DURATION_SECONDS = 0.5
